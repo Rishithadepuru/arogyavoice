@@ -475,11 +475,35 @@
     .main-content { margin-left: 0; }
     .grid-3, .grid-4 { grid-template-columns: 1fr 1fr; }
     .hero-features { grid-template-columns: 1fr; }
+    .topbar { padding: 12px 16px; }
+    .page-body { padding: 16px; }
+    .topbar-title { font-size: 16px; }
   }
   @media (max-width: 600px) {
     .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
-    .page-body { padding: 16px; }
-    .topbar { padding: 14px 16px; }
+    .page-body { padding: 12px; }
+    .topbar { padding: 10px 12px; flex-wrap: wrap; gap: 8px; }
+    .topbar-actions { gap: 8px; }
+    .card-body { padding: 14px 16px 16px; }
+    .card-header { padding: 14px 16px 0; }
+    .btn-lg { padding: 12px 20px; font-size: 14px; }
+    .section-title { font-size: 16px; }
+    .stat-value { font-size: 22px; }
+    .hero-title { font-size: 36px !important; }
+    .hero-telugu { font-size: 16px !important; }
+    .hero-desc { font-size: 14px !important; }
+    .hero-cta { flex-direction: column; align-items: center; }
+    .chat-messages { height: 260px; }
+    .voice-btn { width: 80px; height: 80px; font-size: 32px; }
+    .upload-zone { padding: 28px 16px; }
+    .brand-name { font-size: 17px; }
+    .topbar-sub { display: none; }
+    .lang-select { font-size: 11px; padding: 4px 6px; }
+  }
+  @media (max-width: 400px) {
+    .page-body { padding: 8px; }
+    .topbar { padding: 8px 10px; }
+    .grid-4 { grid-template-columns: 1fr 1fr; }
   }
 
   /* ── MISC ── */
@@ -528,83 +552,33 @@ const translations = {
 };
 
 
-// ────────────── GEMINI API ──────────────
-// Current 2025/2026 Gemini models — 1.5 models deprecated
-const GEMINI_MODELS = [
-  "gemini-2.0-flash-lite",   // cheapest, best free-tier option
-  "gemini-2.0-flash",        // standard
-  "gemini-2.5-flash-preview-04-17", // latest preview if available
-];
+// ────────────── BACKEND API ──────────────
+// All AI calls go through the local Express server (server.js)
+// This keeps the Gemini API key secure and off the browser
+const BACKEND = "http://localhost:5000";
 
-function _isQuotaError(msg) {
-  return msg.includes("quota") || msg.includes("RESOURCE_EXHAUSTED") ||
-         msg.includes("429") || msg.includes("exceeded");
-}
-
-function _isNotFoundError(msg, status) {
-  return status === 404 || msg.includes("not found") ||
-         msg.includes("does not exist") || msg.toLowerCase().includes("invalid model");
-}
-
-async function _tryModel(apiKey, model, parts) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-  const res = await fetch(url, {
+async function callVoice(message) {
+  const res = await fetch(BACKEND + "/api/voice", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ contents: [{ parts }] })
+    body: JSON.stringify({ message })
   });
+  if (!res.ok) throw new Error("Server error " + res.status + ". Is the server running? (node server.js)");
   const data = await res.json();
-  if (!res.ok || data.error) {
-    const msg = data?.error?.message || ("HTTP " + res.status);
-    const quota = _isQuotaError(msg);
-    const notFound = !quota && _isNotFoundError(msg, res.status);
-    throw Object.assign(new Error(msg), { quota, notFound });
-  }
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw Object.assign(new Error("Empty response from " + model), { notFound: true });
-  return text;
+  if (data.error) throw new Error(data.error);
+  return data.reply || "No response received.";
 }
 
-async function callGemini(apiKey, prompt, imageBase64 = null, mimeType = "image/jpeg") {
-  if (!apiKey) throw new Error("No API key set. Click the key icon at the top-right to enter your Gemini API key.");
-  const parts = [{ text: prompt }];
-  if (imageBase64) parts.unshift({ inline_data: { mime_type: mimeType, data: imageBase64 } });
-
-  let lastErr = null;
-  let allQuota = true;
-
-  for (const model of GEMINI_MODELS) {
-    try {
-      return await _tryModel(apiKey, model, parts);
-    } catch (e) {
-      lastErr = e;
-      if (e.quota) {
-        // Quota error on this model — try next (different models may have different quotas)
-        continue;
-      }
-      if (e.notFound) {
-        // Model not available for this key — try next
-        allQuota = false;
-        continue;
-      }
-      // Any other error (invalid key, network, etc) — stop immediately
-      throw e;
-    }
-  }
-
-  // All models failed — give a clear, actionable error message
-  const baseMsg = lastErr?.message || "All models failed";
-  if (allQuota || _isQuotaError(baseMsg)) {
-    throw new Error(
-      "API quota exhausted.\n\n" +
-      "Your free-tier quota is used up for all Gemini models.\n\n" +
-      "To fix:\n" +
-      "1. Go to aistudio.google.com/apikey\n" +
-      "2. Create a NEW API key (free)\n" +
-      "3. Click the key icon top-right and enter the new key"
-    );
-  }
-  throw lastErr || new Error("All Gemini models failed. Check your API key at aistudio.google.com/apikey");
+async function callReport(prompt) {
+  const res = await fetch(BACKEND + "/api/report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt })
+  });
+  if (!res.ok) throw new Error("Server error " + res.status + ". Is the server running? (node server.js)");
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data.analysis || "No analysis received.";
 }
 
 
@@ -622,77 +596,33 @@ function Toast({ toasts }) {
   );
 }
 
-// ────────────── API KEY MODAL ──────────────
-function ApiKeyModal({ onSave }) {
-  const [key, setKey] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [status, setStatus] = useState(null); // {ok,msg}
-
-  const testAndSave = async () => {
-    const k = key.trim();
-    if (!k) return;
-    setTesting(true); setStatus(null);
-    try {
-      await callGemini(k, "Reply with one word: OK");
-      setStatus({ ok:true, msg:"✅ API key works! Saving now..." });
-      setTimeout(() => onSave(k), 900);
-    } catch(e) {
-      setStatus({ ok:false, msg:"❌ " + e.message });
-      setTesting(false);
-    }
-  };
-
+// ────────────── SERVER STATUS ──────────────
+// API key lives in server .env — no key needed in browser
+function ServerStatusBanner({ serverOk, onCheck }) {
+  if (serverOk === null) return null;
   return (
     <div style={{
-      position:'fixed', inset:0, background:'rgba(0,0,0,0.7)',
-      display:'flex', alignItems:'center', justifyContent:'center', zIndex:9999,
-      backdropFilter:'blur(8px)'
+      background: serverOk ? '#dcf5e7' : '#fde8e8',
+      border: '1.5px solid ' + (serverOk ? '#a8e0bc' : '#f0a0a0'),
+      borderRadius:12, padding:'12px 18px', marginBottom:16,
+      display:'flex', alignItems:'center', gap:10, fontSize:13,
+      color: serverOk ? '#1b5c38' : '#8b1a1a'
     }}>
-      <div style={{ background:'#fff', borderRadius:20, padding:36, maxWidth:440, width:'90%', boxShadow:'0 20px 60px rgba(0,0,0,0.25)' }}>
-        <div style={{fontSize:40, textAlign:'center', marginBottom:12}}>🔑</div>
-        <h2 style={{textAlign:'center', fontSize:22, fontWeight:800, marginBottom:8}}>Gemini API Key</h2>
-        <p style={{textAlign:'center', fontSize:14, color:'#666', marginBottom:16, lineHeight:1.6}}>
-          Enter your Google Gemini API key to enable AI features.<br/>
-          Get a free key at <strong>aistudio.google.com</strong>
-        </p>
-        <input
-          className="input-field" type="password" placeholder="AIzaSy..."
-          value={key}
-          onChange={e => { setKey(e.target.value); setStatus(null); }}
-          onKeyDown={e => e.key==='Enter' && testAndSave()}
-          style={{marginBottom:10}}
-        />
-        {status && (
-          <div style={{
-            marginBottom:12, padding:'10px 14px', borderRadius:10, fontSize:13,
-            background: status.ok ? '#dcf5e7' : '#fde8e8',
-            color: status.ok ? '#1b5c38' : '#8b1a1a',
-            border: '1px solid ' + (status.ok ? '#a8e0bc' : '#f0a0a0')
-          }}>{status.msg}</div>
-        )}
-        <button
-          className="btn btn-primary w-full btn-lg"
-          onClick={testAndSave}
-          disabled={!key.trim() || testing}
-          style={{justifyContent:'center', marginBottom:8}}
-        >
-          {testing
-            ? <><div className="spinner" style={{width:18,height:18,borderWidth:2}} /> Testing connection...</>
-            : '🚀 Test & Save API Key'
-          }
-        </button>
-        <button
-          className="btn btn-secondary w-full"
-          style={{justifyContent:'center'}}
-          onClick={() => key.trim() && onSave(key.trim())}
-          disabled={!key.trim()}
-        >Skip test — Save directly</button>
-        <p style={{textAlign:'center', fontSize:11, color:'#999', marginTop:12}}>
-          Stored in your browser only — never sent to any server except Google.
-        </p>
-      </div>
+      <span style={{fontSize:18}}>{serverOk ? '✅' : '❌'}</span>
+      <span style={{flex:1}}>
+        {serverOk
+          ? 'Server connected — AI features are active'
+          : 'Cannot reach backend server. Run: node server.js'}
+      </span>
+      <button className="btn btn-sm btn-secondary" onClick={onCheck}>Check again</button>
     </div>
   );
+}
+
+// Dummy modal kept for compatibility — no longer needs API key
+function ApiKeyModal({ onSave }) {
+  useEffect(() => { onSave("server-mode"); }, []);
+  return null;
 }
 
 // ────────────── LANDING PAGE ──────────────
@@ -967,61 +897,36 @@ function UploadPage({ apiKey, addReport, addToast, lang = "en" }) {
 
   const analyze = async () => {
     if (!file) { addToast('Please select a file first', 'warn', '📁'); return; }
-    if (!apiKey) {
-      setResult({ text: '⚠️ No API key set.\n\nPlease click the 🔑 icon at the top-right to enter your Gemini API key, then try again.', status: 'warn' });
-      return;
-    }
     setLoading(true);
     setResult(null);
     try {
-      // Read file as base64 regardless of type (image OR pdf)
-      const { b64, mime } = await new Promise((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = e => {
-          const dataUrl = e.target.result;
-          const b64 = dataUrl.split(',')[1];
-          const mime = file.type || 'application/octet-stream';
-          resolve({ b64, mime });
-        };
-        r.onerror = () => reject(new Error('Failed to read file'));
-        r.readAsDataURL(file);
-      });
+      const catLabel = categories.find(c => c.id === category)?.label || category;
+      const prompt = `You are an expert medical AI assistant. Analyze this ${catLabel} report for a Telugu-speaking rural patient.
 
-      // Gemini supports images (jpeg/png/webp/gif) and PDFs directly
-      const supportedMime = ['image/jpeg','image/png','image/webp','image/gif','application/pdf'];
-      const fileBase64 = supportedMime.includes(mime) ? b64 : null;
-      const fileMime = supportedMime.includes(mime) ? mime : null;
-
-      const catLabel = categories.find(c=>c.id===category)?.label || category;
-      const prompt = `You are an expert medical AI assistant. Analyze this ${catLabel} report.
-
-Provide a comprehensive response in this exact format:
+Respond in this exact format:
 
 **TELUGU SUMMARY (సారాంశం):**
-[Explain in simple Telugu that a village person can understand. 2-3 sentences.]
+[Explain in simple Telugu, 2-3 sentences a village person can understand]
 
 **KEY VALUES (ముఖ్యమైన విలువలు):**
-[List any detected values: Blood Sugar, Hemoglobin, Blood Pressure, etc. with normal ranges]
-STATUS: [NORMAL/WARNING/CRITICAL based on overall health]
+[List values: Blood Sugar, Hemoglobin, Blood Pressure etc. with normal ranges]
+STATUS: [NORMAL or WARNING or CRITICAL]
 
 **HEALTH INDICATORS:**
-- Blood Sugar: [value if found] | Status: [Normal/High/Low]
-- Hemoglobin: [value if found] | Status: [Normal/High/Low]
-- Blood Pressure: [value if found] | Status: [Normal/High/Low]
+- Blood Sugar: [value] | Status: [Normal/High/Low]
+- Hemoglobin: [value] | Status: [Normal/High/Low]
+- Blood Pressure: [value] | Status: [Normal/High/Low]
 
 **SUGGESTIONS IN TELUGU (సూచనలు):**
-[3-4 specific Telugu health suggestions]
+[3-4 Telugu health suggestions]
 
-**DOCTOR VISIT NEEDED:** [Yes/No with reason in Telugu]
+**DOCTOR VISIT NEEDED:** [Yes/No with Telugu reason]`;
 
-${fileBase64 ? 'Analyze the attached file carefully and extract all medical values visible.' : 'No file could be attached. Provide general information about ' + catLabel + ' reports and what values to look for.'}`;
-
-      const response = await callGemini(apiKey, prompt, fileBase64, fileMime);
-
+      const response = await callReport(prompt);
       const safeR = response || "";
       const status =
         safeR.toUpperCase().includes("CRITICAL") ? "critical" :
-        safeR.toUpperCase().includes("WARNING")  ? "warn" : "ok";
+        safeR.toUpperCase().includes("WARNING") ? "warn" : "ok";
 
       addReport({
         name: file.name,
@@ -1030,7 +935,7 @@ ${fileBase64 ? 'Analyze the attached file carefully and extract all medical valu
         type: category,
         category: catLabel,
         status,
-        summary: safeR.split('**TELUGU SUMMARY')[1]?.split('**')[1]?.trim() || safeR.substring(0,200),
+        summary: safeR.split('**TELUGU SUMMARY')[1]?.split('**')[1]?.trim() || safeR.substring(0, 200),
         fullAnalysis: safeR,
         preview: preview
       });
@@ -1038,9 +943,8 @@ ${fileBase64 ? 'Analyze the attached file carefully and extract all medical valu
       addToast('Report analyzed successfully! ✅', 'success', '✅');
     } catch (e) {
       const errMsg = e.message || 'Unknown error';
-      // Show error INSIDE the result panel so user sees it clearly
       setResult({
-        text: '❌ Analysis failed\n\n' + errMsg + '\n\nTroubleshooting:\n• Make sure your Gemini API key is valid\n• Check that the Generative Language API is enabled in Google Cloud Console\n• Try re-entering your API key using the 🔑 button',
+        text: '❌ Analysis failed\n\n' + errMsg + '\n\nMake sure the backend server is running:\n  node server.js',
         status: 'warn'
       });
       addToast('Error: ' + errMsg, 'warn', '❌');
@@ -1227,46 +1131,20 @@ function VoiceAssistant({ apiKey, addToast }) {
     const trimmed = (text || '').trim();
     if (!trimmed) return;
 
-    // FIX: Show friendly message in chat if no API key
-    if (!apiKey) {
-      setMessages(prev => [...prev,
-        { role:'user', text: trimmed, time: new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'}) },
-        { role:'bot', text: '⚠️ API key not set. Please click the 🔑 button at the top right and enter your Gemini API key to enable AI responses.', time: new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'}) }
-      ]);
-      setInput('');
-      transcriptRef.current = '';
-      return;
-    }
-
-    setMessages(prev => [...prev, { role:'user', text: trimmed, time: new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'}) }]);
+    setMessages(prev => [...prev, {
+      role: 'user', text: trimmed,
+      time: new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'})
+    }]);
     setInput('');
     transcriptRef.current = '';
     setTyping(true);
 
     try {
-      const history = messages.slice(-6).map(m => `${m.role === 'user' ? 'Patient' : 'Doctor AI'}: ${m.text}`).join('\n');
-      const prompt = `You are a helpful health assistant for rural Telugu-speaking people. Respond in simple Telugu.
-
-Previous conversation:
-${history}
-
-Patient's message: ${trimmed}
-
-Please respond in Telugu (తెలుగు) with:
-1. Possible causes (కారణాలు)
-2. Basic precautions (జాగ్రత్తలు)  
-3. Should they see a doctor? (వైద్యుడిని కలవాలా?)
-4. Simple home remedies if appropriate (ఇంట్లో చేయగలిగేవి)
-
-Keep response simple, warm, and under 150 words. Use everyday Telugu words. Add relevant emojis.`;
-
-      const response = await callGemini(apiKey, prompt);
-      const reply = (response || '').trim() || 'క్షమించండి, సమాధానం రాలేదు. దయచేసి మళ్ళీ ప్రయత్నించండి.';
+      const reply = await callVoice(trimmed);
       addBotMsg(reply);
       speak(reply.replace(/[*_#]/g, ''));
     } catch(e) {
-      // FIX: show error inside chat, not just toast
-      const errText = '❌ Error: ' + (e.message || 'Something went wrong. Please check your API key and try again.');
+      const errText = '❌ ' + (e.message || 'Server error. Make sure server.js is running.');
       addBotMsg(errText);
       addToast(errText, 'warn', '❌');
     } finally {
@@ -1442,7 +1320,7 @@ Generate health suggestions in Telugu for a rural Indian patient.
 IMPORTANT: Return ONLY a raw JSON object. No markdown, no backticks, no explanation text.
 {"diet":["Telugu tip 1","Telugu tip 2","Telugu tip 3"],"lifestyle":["Telugu tip 1","Telugu tip 2","Telugu tip 3"],"preventive":["Telugu tip 1","Telugu tip 2","Telugu tip 3"],"warnings":["Telugu warning if any critical issue"],"overall":"One sentence overall health status in Telugu with emoji"}`;
 
-      const response = await callGemini(apiKey, prompt);
+      const response = await callReport(prompt);
       let clean = response.replace(/\`\`\`json|\`\`\`/gi, '').trim();
       const match = clean.match(/\{[\s\S]*\}/);
       if (match) clean = match[0];
@@ -1580,7 +1458,7 @@ function RemindersPage({ reminders, setReminders, reports, apiKey, addToast }) {
       If you cannot read the prescription clearly, return sample medicines for demonstration.
       Return array of medicine objects only.`;
 
-      const response = await callGemini(apiKey, prompt, b64);
+      const response = await callReport(prompt);
       const clean = response.replace(/```json|```/g, '').trim();
       const medicines = JSON.parse(clean.startsWith('[') ? clean : '[' + clean + ']');
 
@@ -1729,8 +1607,16 @@ function RemindersPage({ reminders, setReminders, reports, apiKey, addToast }) {
 // ────────────── MAIN APP ──────────────
 function App() {
   const [page, setPage] = useState('landing');
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('arogya_api_key') || '');
+  const [apiKey, setApiKey] = useState('server-mode'); // API key lives in server .env
   const [showApiModal, setShowApiModal] = useState(false);
+  const [serverOk, setServerOk] = useState(null);
+
+  // Check backend server on mount
+  useEffect(() => {
+    fetch('http://localhost:5000/')
+      .then(r => r.ok ? setServerOk(true) : setServerOk(false))
+      .catch(() => setServerOk(false));
+  }, []);
   const [reports, setReports] = useState([]);
   const [reminders, setReminders] = useState([
     { medicine:'Metformin', dose:'500mg', time:'After breakfast', timing:'morning', icon:'🌅', label:'Morning', color:'reminder-morning', done:false },
@@ -1752,11 +1638,9 @@ function App() {
   };
 
   const saveApiKey = (key) => {
-    localStorage.setItem('arogya_api_key', key);
-    setApiKey(key);
+    setApiKey('server-mode');
     setShowApiModal(false);
     setPage('dashboard');
-    addToast('API key saved! AI features unlocked 🚀', 'success', '🔑');
   };
 
   const navItems = [
@@ -1861,6 +1745,7 @@ function App() {
             <select
               value={lang}
               onChange={(e) => setLang(e.target.value)}
+              className="lang-select"
               style={{
                 padding:'6px 10px', borderRadius:8, border:'1.5px solid var(--border)',
                 fontSize:13, fontWeight:600, color:'var(--text)', background:'var(--surface)',
@@ -1882,25 +1767,26 @@ function App() {
             )}
             <div style={{
               width:36, height:36, borderRadius:'50%',
-              background: apiKey ? 'var(--leaf)' : 'var(--critical)',
+              background: serverOk ? 'var(--leaf)' : serverOk === false ? 'var(--critical)' : 'var(--border)',
               display:'flex', alignItems:'center', justifyContent:'center',
-              color:'#fff', fontSize:16, cursor:'pointer'
-            }} onClick={() => !apiKey && setShowApiModal(true)}>
-              {apiKey ? '🔑' : '⚠️'}
+              color:'#fff', fontSize:16, cursor:'default',
+              title: serverOk ? 'Server connected' : 'Server offline'
+            }}>
+              {serverOk ? '✅' : serverOk === false ? '❌' : '⏳'}
             </div>
           </div>
         </header>
 
         <div className="page-body">
-          {!apiKey && page !== 'records' && (
-            <div className="api-notice">
-              <span>⚠️</span>
-              <span>
-                <strong>API key required</strong> for AI features.{' '}
-                <button className="btn btn-warn btn-sm" onClick={() => setShowApiModal(true)}>Add API Key</button>
-              </span>
-            </div>
-          )}
+          <ServerStatusBanner
+            serverOk={serverOk}
+            onCheck={() => {
+              setServerOk(null);
+              fetch('http://localhost:5000/')
+                .then(r => r.ok ? setServerOk(true) : setServerOk(false))
+                .catch(() => setServerOk(false));
+            }}
+          />
 
           {page === 'dashboard' && <Dashboard reports={reports} reminders={reminders} setPage={setPage} lang={lang} />}
           {page === 'records' && <RecordsPage reports={reports} setReports={setReports} addToast={addToast} />}
