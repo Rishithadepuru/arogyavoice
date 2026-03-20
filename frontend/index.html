@@ -555,7 +555,7 @@ const translations = {
 // ────────────── BACKEND API ──────────────
 // All AI calls go through the local Express server (server.js)
 // This keeps the Gemini API key secure and off the browser
-const BACKEND = "http://localhost:5000";
+const BACKEND = "https://arogyavoice-3.onrender.com";
 
 async function callVoice(message) {
   const res = await fetch(BACKEND + "/api/voice", {
